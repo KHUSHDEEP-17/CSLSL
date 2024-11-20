@@ -65,7 +65,8 @@ def preprocessing(params):
                 else:
                     loc_count[loc] += 1
     
-    record_num = os.popen(f'wc -l {filepath}').readlines()[0].split()[0]
+    with open(filepath, 'r') as f:
+        record_num = sum(1 for _ in f)
     print(f'Finished, records is {record_num}, all user is {len(user_count)}, all location is {len(loc_count)}')
     
     
@@ -95,39 +96,37 @@ def preprocessing(params):
                     record[params.loc_po] = loc_id[loc]
                     writer.writerow(record)
     
-    record_num = os.popen(f'wc -l {filter_path}').readlines()[0].split()[0]
+    with open(filter_path, 'r') as f:
+        record_num = sum(1 for _ in f)
+
     print(f'Finished, records is {record_num}, user is {len(user_id)}, location is {len(loc_id)}')
     
     
     # Merge data 
     print('='*20, 'Merging')
     merge_path = f'{params.path}{params.dataname}_merged.txt'
-    print(f'Merge path is {filter_path}')
+    print(f'Merge path is {merge_path}')
     with open(merge_path, 'w') as f_out:
         writer = csv.writer(f_out, delimiter='\t')
-        # get first record
-        with open(filter_path, 'r') as f_in:
-            pre_record = f_in.readlines()[0].split('\t')
-        # all record
+        # Initialize the previous record
+        pre_record = None
+        # Process records
         with open(filter_path, 'r') as f_in:
             reader = csv.reader(f_in, delimiter='\t')
             for record in reader:
-                # same person, same location, same day
-                if record[params.user_po] == pre_record[params.user_po] and \
-                    record[params.loc_po] == pre_record[params.loc_po] and \
-                    record[params.tim_po].split('T')[0] == pre_record[params.tim_po].split('T')[0]:   
+                # Skip empty or malformed lines
+                if len(record) <= params.tim_po:
                     continue
+                # Check if the record matches the previous one (same user, location, and day)
+                if pre_record and \
+                   record[params.user_po] == pre_record[params.user_po] and \
+                   record[params.loc_po] == pre_record[params.loc_po] and \
+                   record[params.tim_po].split('T')[0] == pre_record[params.tim_po].split('T')[0]:
+                    continue
+                # Write the record to the output
                 writer.writerow(record)
                 pre_record = record
-     
-    record_num = os.popen(f'wc -l {merge_path}').readlines()[0].split()[0]
-    print(f'Finished, records is {record_num}')             
-   
-
-    
-if __name__ == '__main__':
-    
-    start_time = time.time()
-    params = settings()
-    preprocessing(params)
-    print('Time cost:', f'{time.time()-start_time:.0f}')
+    # Count lines in the merged file
+    with open(merge_path, 'r') as f:
+        record_num = sum(1 for _ in f)
+    print(f'Finished, records is {record_num}')
