@@ -7,7 +7,6 @@ from math import pi
 from collections import Counter
 
 
-
 class DataGeneration(object):
     def __init__(self, params):
         
@@ -74,106 +73,114 @@ class DataGeneration(object):
     # 2. filter users and locations, and then split trajectory into sessions
     def filter_and_divide_sessions(self):
         POI_MIN_RECORD_FOR_USER = 1  # keep same setting with DeepMove and LSTPM
-        
-        # filter user and location
-        uid_list = [x for x in self.raw_data if len(self.raw_data[x]) > self.user_record_min]      # uid list
+
+        # Filter user and location
+        uid_list = [x for x in self.raw_data if len(self.raw_data[x]) > self.user_record_min]  # uid list
         pid_list = [x for x in self.poi_count if self.poi_count[x] > self.poi_record_min]  # pid list
-        
-        # iterate each user
+
+        # Iterate through each user
         for uid in uid_list:
-            user_records = self.raw_data[uid]   # user_records is [[pid, tim (, cid)]]
-            topk = Counter([x[0] for x in user_records]).most_common()  # most common poi, [(poi, count), ...]
-            topk_filter = [x[0] for x in topk if x[1] > POI_MIN_RECORD_FOR_USER]   # the poi that the user go more than one time 
-            sessions = {}   # sessions is {'sid' : [[pid, [week, hour] (, cid)], ...]}
-            # iterate each record
+            user_records = self.raw_data[uid]  # user_records is [[pid, tim (, cid)]]
+            topk = Counter([x[0] for x in user_records]).most_common()  # Most common POIs
+            topk_filter = [x[0] for x in topk if x[1] > POI_MIN_RECORD_FOR_USER]  # Filter POIs visited more than once
+            sessions = {}  # sessions is {'sid': [[pid, [week, hour] (, cid)], ...]}
+
+            # Initialize week variables
+            # Initialize week variables
+            last_week = None
+            current_week = None
+
+            # Initialize session id counter
+            sid = 0
+
+            # Iterate through each record
             for i, record in enumerate(user_records):
                 if self.cat_contained:
                     poi, tim, cid = record
                 else:
                     poi, tim = record
                 try:
-                    # time processing
+                    # Time processing
+                    time_struct = time.strptime(tim, "%a %b %d %H:%M:%S %z %Y")
+                except ValueError:
                     time_struct = time.strptime(tim, "%Y-%m-%dT%H:%M:%SZ")
-                    calendar_date = datetime.date(time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday).isocalendar()
-                    current_week = f'{calendar_date.year}-{calendar_date.week}'
-                    # Encode time
-#                     tim_code = [time_struct.tm_wday+1, time_struct.tm_hour*2+int(time_struct.tm_min/30)+1 ]    # week(1~7), hours(1~48) 
-                    tim_code = [time_struct.tm_wday+1, int(time_struct.tm_hour/2)+1 ]    # week(1~7), hours(1~12) 
-                    # revise record
-                    record[1] = tim_code
-                except Exception as e:
-                    print('error:{}'.format(e))
-                    raise Exception
-                    
-                # divide session. Rule is: same week
-                sid = len(sessions)  # session id
+
+                # Calculate current week
+                calendar_date = datetime.date(
+                    time_struct.tm_year, time_struct.tm_mon, time_struct.tm_mday
+                ).isocalendar()
+                current_week = f"{calendar_date[0]}-{calendar_date[1]}"
+
+                # Encode time
+                tim_code = [time_struct.tm_wday + 1, int(time_struct.tm_hour / 2) + 1]  # week(1~7), hours(1~12)
+
+                # Revise record
+                record[1] = tim_code
+
+                # Divide sessions based on the week
                 if poi not in pid_list and poi not in topk_filter:
-                    # filter the poi if poi not in topk_filter:
                     continue
-                if i == 0 or len(sessions) == 0:
-                    sessions[sid] = [record]
+                if i == 0 or len(sessions) == 0 or last_week != current_week:  # New session if first record or week changes
+                    sid += 1
+                    sessions[sid] = [record]  # Create a new session
                 else:
-                    if last_week != current_week:    # new session
-                        sessions[sid] = [record]    
-                    else:
-                        sessions[sid - 1].append(record)   # Note: data is already merged
-                last_week = current_week
-            sessions_filtered = {}
-            # filter session with session_min
-            for s in sessions:
-                if len(sessions[s]) >= self.session_min:
-                    sessions_filtered[len(sessions_filtered)] = sessions[s]
-            # filter user with sessions_min, that is, the user must have sessions_min's sessions.
+                    sessions[sid].append(record)  # Append to the current session
+
+                last_week = current_week  # Update last_week
+
+            # Filter sessions based on session_min
+            sessions_filtered = {s: sessions[s] for s in sessions if len(sessions[s]) >= self.session_min}
+
+            # Filter users based on sessions_min
             if len(sessions_filtered) < self.sessions_min:
                 continue
-                
+
             # ReEncode location index (may encode category)
-            for sid in sessions_filtered:    # sessions is {'sid' : [[pid, [week, hour]], ...]}
+            for sid in sessions_filtered:
                 for idx, record in enumerate(sessions_filtered[sid]):
-                    # reEncode location
-                    if record[0] not in self.pid_dict: 
-                        self.pid_dict[record[0]] = len(self.pid_dict) + 1    # the id start from 1
+                    # ReEncode location
+                    if record[0] not in self.pid_dict:
+                        self.pid_dict[record[0]] = len(self.pid_dict) + 1  # ID starts from 1
                     new_pid = self.pid_dict[record[0]]
-                    # new pid for latitude and longitude
-                    self.new_lat_lon[new_pid] = self.raw_lat_lon[record[0]] 
-                    self.lat_lon_radians[new_pid] = list(np.array(self.raw_lat_lon[record[0]]) * pi / 180)
-                    # assign new pid
+                    self.new_lat_lon[new_pid] = self.raw_lat_lon[record[0]]
+                    self.lat_lon_radians[new_pid] = list(
+                        np.array(self.raw_lat_lon[record[0]]) * pi / 180
+                    )  # Convert to radians
                     record[0] = new_pid
-                    # time
                     self.tim_w.add(record[1][0])
                     self.tim_h.add(record[1][1])
-                    # category
+
+                    # Handle category
                     if self.cat_contained:
-                        # encode cid
                         if record[2] not in self.cid_dict:
-                            new_cid = len(self.cid_dict) + 1  # the id start from 1
+                            new_cid = len(self.cid_dict) + 1
                             self.cid_dict[record[2]] = new_cid
-                            self.new_cat_dict[new_cid] = self.raw_cat_dict[record[2]]  # raw_cid-cat to new_cid-cat
+                            self.new_cat_dict[new_cid] = self.raw_cat_dict[record[2]]
                             self.cid_count_dict[new_cid] = 1
-                        # assign cid
                         record[2] = self.cid_dict[record[2]]
-                        # count cid
                         self.cid_count_dict[record[2]] += 1
-                        # pid-cid dict
                         if new_pid not in self.pid_cid_dict:
                             self.pid_cid_dict[new_pid] = record[2]
-                    # reassign record        
-                    sessions_filtered[sid][idx] = record
-            
-            # divide train and test
+
+            # Divide train and test
             sessions_id = list(sessions_filtered.keys())
             split_id = int(np.floor(self.train_split * len(sessions_id)))
             train_id = sessions_id[:split_id]
             test_id = sessions_id[split_id:]
-            assert len(train_id) > 0, 'train sessions have error'
-            assert len(test_id) > 0, 'test sessions have error'
-            # preprare final data. (ReEncode user index), he id start from 1
-            self.data_filtered[len(self.data_filtered)+1] = {'sessions_count': len(sessions_filtered), 'sessions': sessions_filtered, 'train': train_id, 'test': test_id}
-            
 
-        # final uid list
+            assert len(train_id) > 0, "train sessions have error"
+            assert len(test_id) > 0, "test sessions have error"
+
+            self.data_filtered[len(self.data_filtered) + 1] = {
+                "sessions_count": len(sessions_filtered),
+                "sessions": sessions_filtered,
+                "train": train_id,
+                "test": test_id,
+            }
+
+        # Finalize user list
         self.uid_list = list(self.data_filtered.keys())
-        print(f'Final user is {len(self.uid_list)}, location is {len(self.pid_dict)}')
+        print(f"Final user is {len(self.uid_list)}, location is {len(self.pid_dict)}")
         
         
     # 3. generate data with history sessions
